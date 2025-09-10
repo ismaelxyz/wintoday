@@ -1,0 +1,33 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36414.22 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "wintoday.client", "wintoday.client\wintoday.client.esproj", "{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "wintoday.Server", "wintoday.Server\wintoday.Server.csproj", "{AD0FED68-978E-467D-AA86-293F4A2C78B7}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Debug|Any CPU.Deploy.0 = Debug|Any CPU
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C2EAA76-E91E-9F81-9D19-9B69C8304C54}.Release|Any CPU.Deploy.0 = Release|Any CPU
+		{AD0FED68-978E-467D-AA86-293F4A2C78B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD0FED68-978E-467D-AA86-293F4A2C78B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD0FED68-978E-467D-AA86-293F4A2C78B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD0FED68-978E-467D-AA86-293F4A2C78B7}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E1F8F860-0D27-4CD8-88BF-C1222A4D0885}
+	EndGlobalSection
+EndGlobal
