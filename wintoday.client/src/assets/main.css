@@ -4,10 +4,12 @@
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 0; /* Layout interno controla su propio padding */
+  padding: 0;
+  /* Layout interno controla su propio padding */
   font-weight: normal;
   min-height: 100dvh;
-  display: block; /* Asegura que no quede grid accidental en overrides previos */
+  display: block;
+  /* Asegura que no quede grid accidental en overrides previos */
 }
 
 a,
