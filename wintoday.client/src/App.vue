@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, computed } from 'vue';
+import { reactive, computed, ref } from 'vue';
 import { api } from './api';
 import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto } from './types';
 import SpinPanel from './components/SpinPanel.vue';
+import RouletteWheel from './components/RouletteWheel.vue';
 import BetForm from './components/BetForm.vue';
 
 interface State {
@@ -12,6 +13,7 @@ interface State {
   loading: boolean;
   error: string | null;
   pendingRoundId: string | null; // latest spin's round to bet on
+  history: { spin: SpinResultDto; bet?: BetOutcomeDto }[];
 }
 
 const state = reactive<State>({
@@ -21,6 +23,7 @@ const state = reactive<State>({
   loading: false,
   error: null,
   pendingRoundId: null,
+  history: [],
 });
 
 async function login(name: string) {
@@ -34,20 +37,30 @@ async function refreshPlayer() {
   if (!state.player) return; try { state.player = await api.getPlayer(state.player.name); } catch {}
 }
 
-async function spin() {
-  if (!state.player) return;
-  state.loading = true; state.error = null;
+const wheelSpinning = ref(false);
+
+async function ensureSpin(): Promise<SpinResultDto | null> {
+  if (!state.player || wheelSpinning.value) return null;
+  state.error = null;
+  wheelSpinning.value = true;
   try {
     const result = await api.spin(state.player.name);
     state.lastSpin = result;
     state.pendingRoundId = result.roundId;
-  } catch (e: any) { state.error = e.message || 'Error'; }
-  finally { state.loading = false; }
+    state.history.unshift({ spin: result });
+    return result;
+  } catch (e: any) { state.error = e.message || 'Error'; wheelSpinning.value = false; return null; }
 }
 
 async function placeBet(payload: { wager: number; betType: string; color?: string | null; isEven?: boolean | null; number?: number | null }) {
-  if (!state.player || !state.pendingRoundId) return;
-  state.loading = true; state.error = null;
+  if (!state.player) return;
+  state.error = null;
+  if (!state.pendingRoundId) {
+    const s = await ensureSpin();
+    if (!s) return;
+  }
+  if (!state.pendingRoundId) return;
+  state.loading = true;
   try {
     const outcome = await api.commitBet({
       roundId: state.pendingRoundId,
@@ -60,12 +73,14 @@ async function placeBet(payload: { wager: number; betType: string; color?: strin
     });
     state.lastBet = outcome;
     state.player.funds = outcome.newBalance;
-    await refreshPlayer();
+    const idx = state.history.findIndex(h => h.spin.roundId === outcome.roundId);
+    if (idx !== -1) state.history[idx].bet = outcome;
   } catch (e: any) { state.error = e.message || 'Error'; }
   finally { state.loading = false; }
 }
 
-const canSpin = computed(() => !!state.player && !state.loading);
+function onWheelAnimationEnd() { wheelSpinning.value = false; }
+const canBet = computed(() => !!state.player && !state.loading && !wheelSpinning.value);
 const loginName = reactive({ value: '' });
 </script>
 
@@ -92,29 +107,43 @@ const loginName = reactive({ value: '' });
     </section>
 
     <section v-else class="dashboard">
-      <div class="container">
-        <div class="actions">
-          <button class="spin-btn" :disabled="!canSpin" @click="spin">🎲 Girar</button>
-          <small class="muted">(Gira y luego apuesta a la misma ronda - flujo simplificado)</small>
-        </div>
-        <div class="grid game-layout">
-          <SpinPanel class="spin-panel" :spin="state.lastSpin" />
-          <BetForm class="bet-panel" :round-id="state.pendingRoundId" :disabled="state.loading || !state.pendingRoundId" @submit="placeBet" />
-          <div class="panel outcome outcome-panel" v-if="state.lastBet">
-            <h3>Resultado Apuesta</h3>
-              <p :class="state.lastBet.won ? 'won' : 'lost'">
-                {{ state.lastBet.won ? '¡Ganaste!' : 'Perdiste' }}
-                <strong>{{ state.lastBet.profit.toFixed(2) }}</strong>
-              </p>
-              <p>Balance: {{ state.lastBet.newBalance.toFixed(2) }}</p>
-              <p class="details">Número: {{ state.lastBet.number }} | Color: {{ state.lastBet.color }}</p>
+      <div class="game-wrapper">
+        <div class="panel game-panel">
+          <h3>Ruleta & Apuesta</h3>
+          <div class="wheel-wrapper">
+            <RouletteWheel :spin="state.lastSpin" :spinning="wheelSpinning" @animation-end="onWheelAnimationEnd" />
           </div>
+          <div class="spin-meta" v-if="state.lastSpin">
+            <span class="pill num"># {{ state.lastSpin.number }}</span>
+            <span class="pill col">{{ state.lastSpin.color }}</span>
+            <span class="pill time">{{ new Date(state.lastSpin.createdAtUtc).toLocaleTimeString() }}</span>
+          </div>
+          <BetForm :round-id="state.pendingRoundId" :disabled="!canBet" @submit="placeBet" />
+          <div class="outcome-box" v-if="state.lastBet">
+            <p class="title">Última Apuesta</p>
+            <p class="result" :class="state.lastBet.won ? 'won' : 'lost'">
+              {{ state.lastBet.won ? '¡Ganaste!' : 'Perdiste' }} <strong>{{ state.lastBet.profit.toFixed(2) }}</strong>
+            </p>
+            <p class="balance">Balance: {{ state.player?.funds.toFixed(2) }}</p>
+            <p class="details">Núm {{ state.lastBet.number }} | {{ state.lastBet.color }} | {{ state.lastBet.betType }}</p>
+          </div>
+        </div>
+        <div class="panel history-panel">
+          <h3>Historial de Apuestas</h3>
+          <ul class="bet-history-list">
+            <li v-for="h in state.history.filter(h=>h.bet)" :key="h.spin.roundId">
+              <span class="id">{{ h.spin.roundId.slice(0,6) }}</span>
+              <span class="num">{{ h.spin.number }}</span>
+              <span class="colr">{{ h.spin.color }}</span>
+              <span class="res" :class="h.bet!.won ? 'won' : 'lost'">{{ h.bet!.won ? '+'+h.bet!.profit.toFixed(2) : '-'+h.bet!.wager.toFixed(2) }}</span>
+            </li>
+          </ul>
         </div>
       </div>
     </section>
 
     <transition name="fade">
-      <div v-if="state.loading" class="loading-overlay">Cargando...</div>
+      <div v-if="state.loading && !wheelSpinning" class="loading-overlay">Cargando...</div>
     </transition>
     <transition name="fade">
       <div v-if="state.error" class="toast error">{{ state.error }}</div>
@@ -140,37 +169,28 @@ button.primary { background:linear-gradient(90deg,#6366f1,#8b5cf6); border:none;
 button.primary:disabled { opacity:.5; cursor:not-allowed; }
 .hint { font-size:.7rem; letter-spacing:.5px; opacity:.55; text-transform:uppercase; }
 
-.dashboard { padding:1.25rem 0 3rem; display:flex; flex-direction:column; gap:1.25rem; }
-.container { width:100%; max-width:100%; margin:0; padding:0 clamp(.9rem,1.8vw,2.4rem); }
-.actions { display:flex; flex-direction:column; gap:.35rem; align-items:flex-start; }
-.spin-btn { background:linear-gradient(135deg,#0ea5e9,#6366f1); border:none; color:#fff; padding:.9rem 1.5rem; font-size:1.05rem; font-weight:600; border-radius:14px; cursor:pointer; box-shadow:0 6px 25px -6px rgba(14,165,233,.6); }
-.spin-btn:disabled { opacity:.5; cursor:not-allowed; }
-.muted { opacity:.55; font-size:.7rem; }
-.grid { display:grid; gap:1.25rem; align-items:start; width:100%; }
-.game-layout { grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); }
+.dashboard { padding:1.25rem 0 3rem; }
 .panel { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:18px; padding:1rem 1.1rem 1.25rem; position:relative; backdrop-filter: blur(6px); }
 :root { --panel-bg: rgba(255,255,255,.07); --shadow-sm:0 2px 8px -2px rgba(0,0,0,.4); --input-bg: rgba(255,255,255,.08); --border: rgba(255,255,255,.2); --focus:#6366f1; }
 
-/* Desktop Responsive Layout */
-@media (min-width: 880px) {
-  /* Allow panels to stretch with screen; introduce third column space if very wide */
-  .game-layout { grid-template-columns: repeat(auto-fit,minmax(340px,1fr)); grid-auto-rows: minmax(180px, auto); }
-  .spin-panel { grid-area: spin; }
-  .bet-panel { grid-area: bet; }
-  .outcome-panel { grid-area: outcome; }
-  .actions { flex-direction:row; align-items:center; justify-content:space-between; }
-}
-
-@media (min-width: 1180px) {
-  .game-layout { grid-template-columns: repeat(auto-fit,minmax(360px,1fr)); }
-  h1 { letter-spacing: -.5px; }
-}
-
-/* Larger screens: tighten panel spacing slightly*/
-@media (min-width:1600px) {
-  .grid { gap:1.5rem; }
-}
-.panel h3 { margin:.2rem 0 1rem; font-size:1rem; letter-spacing:.5px; text-transform:uppercase; font-weight:600; opacity:.9; }
+.panel h3 { margin:.2rem 0 1rem; font-size:.85rem; letter-spacing:.5px; text-transform:uppercase; font-weight:600; opacity:.9; }
+.game-wrapper { max-width:960px; margin:0 auto; display:flex; flex-direction:column; gap:1.5rem; padding:0 1rem 2.5rem; }
+.game-panel { display:flex; flex-direction:column; align-items:center; gap:1rem; text-align:center; }
+.wheel-wrapper { display:flex; justify-content:center; width:100%; }
+.spin-meta { display:flex; gap:.5rem; flex-wrap:wrap; justify-content:center; }
+.pill { background:rgba(255,255,255,.08); padding:.25rem .6rem; border-radius:20px; font-size:.65rem; letter-spacing:.5px; }
+.outcome-box { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); padding:.75rem 1rem; border-radius:14px; display:flex; flex-direction:column; gap:.35rem; width:100%; max-width:420px; }
+.outcome-box .title { margin:0; font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; opacity:.7; }
+.outcome-box .result { margin:0; font-size:.9rem; }
+.outcome-box .balance { margin:0; font-size:.75rem; opacity:.8; }
+.history-panel { max-height:340px; overflow:auto; }
+.bet-history-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.35rem; }
+.bet-history-list li { display:grid; grid-template-columns: 3.5rem 2.5rem 3.5rem 1fr; gap:.4rem; background:rgba(255,255,255,.05); padding:.45rem .6rem; border-radius:8px; font-size:.7rem; align-items:center; }
+.bet-history-list li .id { opacity:.55; }
+.bet-history-list li .num { font-weight:600; }
+.bet-history-list li .res { text-align:right; font-weight:600; }
+.bet-history-list li .res.won { color:#4ade80; }
+.bet-history-list li .res.lost { color:#f87171; }
 .outcome p { margin:.3rem 0; }
 .outcome .won { color:#4ade80; }
 .outcome .lost { color:#f87171; }

@@ -4,7 +4,23 @@ import type { SpinResultDto } from '../types';
 
 const props = defineProps<{ spin: SpinResultDto | null }>();
 
-const colorClass = computed(() => props.spin ? `color-${props.spin.color.toLowerCase()}` : '');
+// Backend puede serializar enums como enteros o strings según config; aseguramos string
+function normalizeColor(val: unknown): string {
+  if (val == null) return '';
+  if (typeof val === 'string') return val;
+  // Map posibles valores numéricos del enum (1 Red, 2 Black, 3 Green?)
+  if (typeof val === 'number') {
+    switch (val) {
+      case 1: return 'Red';
+      case 2: return 'Black';
+      case 3: return 'Green';
+    }
+  }
+  return String(val);
+}
+
+const colorName = computed(() => normalizeColor(props.spin?.color));
+const colorClass = computed(() => colorName.value ? `color-${colorName.value.toLowerCase()}` : '');
 </script>
 
 <template>
@@ -12,7 +28,7 @@ const colorClass = computed(() => props.spin ? `color-${props.spin.color.toLower
     <h3>Último Giro</h3>
     <div v-if="spin" class="spin-result" :class="colorClass">
       <div class="number">{{ spin.number }}</div>
-      <div class="meta">Color: {{ spin.color }}</div>
+      <div class="meta">Color: {{ colorName }}</div>
       <div class="time">{{ new Date(spin.createdAtUtc).toLocaleTimeString() }}</div>
     </div>
     <p v-else class="empty">Aún no hay giros.</p>

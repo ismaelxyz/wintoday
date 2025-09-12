@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch, computed } from 'vue';
 
-const props = defineProps<{ roundId: string | null, disabled?: boolean }>();
+const props = defineProps<{ roundId?: string | null, disabled?: boolean }>();
 const emit = defineEmits<{ (e: 'submit', payload: { wager: number; betType: string; color?: string | null; isEven?: boolean | null; number?: number | null }): void }>();
 
 const state = reactive({
@@ -18,7 +18,8 @@ watch(() => state.betType, () => {
   if (state.betType !== 'exact') state.number = 0;
 });
 
-const canSubmit = computed(() => !!props.roundId && state.wager > 0);
+// Ahora se puede apostar siempre: el flujo creará un giro antes de enviar la apuesta
+const canSubmit = computed(() => state.wager > 0);
 
 function submit() {
   if (!canSubmit.value) return;
@@ -35,7 +36,7 @@ function submit() {
 <template>
   <form class="panel bet-form" @submit.prevent="submit">
     <h3>Hacer Apuesta</h3>
-    <div class="field round" v-if="roundId">Ronda: <code>{{ roundId.slice(0,8) }}</code></div>
+  <div class="field round" v-if="roundId">Ronda previa: <code>{{ roundId.slice(0,8) }}</code></div>
     <label class="field">Monto
       <input type="number" min="0.1" step="0.1" v-model.number="state.wager" :disabled="disabled" required />
     </label>
@@ -69,7 +70,7 @@ function submit() {
         <input type="number" min="0" max="36" v-model.number="state.number" :disabled="disabled" />
       </label>
     </div>
-    <button type="submit" :disabled="!canSubmit || disabled" class="primary w-full">Apostar</button>
+  <button type="submit" :disabled="!canSubmit || disabled" class="primary w-full">🎲 Apostar</button>
   </form>
 </template>
 
@@ -77,8 +78,8 @@ function submit() {
 .bet-form { display: flex; flex-direction: column; gap: .75rem; }
 .field { display: flex; flex-direction: column; gap: .35rem; font-size: .875rem; }
 .field.inline { flex-direction: row; align-items: center; gap: .75rem; }
-input, select { background: var(--input-bg); border: 1px solid var(--border); padding: .5rem .6rem; border-radius: 8px; font: inherit; color: inherit; }
-input:focus, select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+input, select { background:#ffffff; border:1px solid #cbd5e1; padding:.5rem .6rem; border-radius:8px; font:inherit; color:#000; }
+input:focus, select:focus { outline:2px solid var(--focus); outline-offset:1px; }
 .options { display: flex; gap: 1rem; flex-wrap: wrap; }
 button.primary { background: linear-gradient(135deg,#6366f1,#4f46e5); color:#fff; border:none; padding:.75rem 1rem; border-radius:10px; cursor:pointer; font-weight:600; }
 button.primary:disabled { opacity:.5; cursor:not-allowed; }
