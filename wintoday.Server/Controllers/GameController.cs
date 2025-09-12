@@ -20,5 +20,23 @@ public class GameController(IGameService gameService) : ControllerBase
     {
         try { return Ok(await gameService.CommitBetAsync(request, ct)); }
         catch (UnauthorizedAccessException) { return Unauthorized(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [HttpGet("history/{playerName}")]
+    public async Task<ActionResult<IReadOnlyList<BetHistoryItemDto>>> History(string playerName, [FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        try { return Ok(await gameService.GetBetHistoryAsync(playerName, take, ct)); }
+        catch (UnauthorizedAccessException) { return Unauthorized(); }
+    }
+
+    [HttpPost("save-session")]
+    public async Task<ActionResult<SessionSaveResultDto>> SaveSession([FromBody] SaveSessionRequest request, CancellationToken ct)
+    {
+        try { return Ok(await gameService.SaveSessionAsync(request, ct)); }
+        catch (UnauthorizedAccessException) { return Unauthorized(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 }

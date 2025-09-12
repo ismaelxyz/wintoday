@@ -1,4 +1,4 @@
-import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto, LoginRequest, CommitBetRequest, ApiError } from './types';
+import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto, LoginRequest, CommitBetRequest, ApiError, BetHistoryItemDto, SaveSessionRequest, SessionSaveResultDto } from './types';
 
 const base = import.meta.env.VITE_API_BASE?.replace(/\/$/, '') || '';
 
@@ -33,6 +33,13 @@ export const api = {
     commitBet(data: CommitBetRequest) {
         return request<unknown>('/api/Game/commit-bet', { method: 'POST', body: JSON.stringify(data) })
             .then(r => normalizeBetOutcome(r));
+    },
+    betHistory(playerName: string, take = 50) {
+        return request<unknown>(`/api/Game/history/${encodeURIComponent(playerName)}?take=${take}`)
+            .then(r => normalizeHistory(r));
+    },
+    saveSession(data: SaveSessionRequest) {
+        return request<SessionSaveResultDto>('/api/Game/save-session', { method: 'POST', body: JSON.stringify(data) });
     }
 };
 
@@ -72,4 +79,24 @@ function normalizeBetOutcome(r: unknown): BetOutcomeDto {
         betType: String(obj.betType),
         criteria: obj.criteria
     };
+}
+
+function normalizeHistory(r: unknown): BetHistoryItemDto[] {
+    if (!Array.isArray(r)) throw new Error('Invalid history payload');
+    return r.map(item => {
+        if (typeof item !== 'object' || item === null) throw new Error('Invalid history row');
+        const obj = item as Record<string, unknown>;
+        return {
+            roundId: String(obj.roundId),
+            betId: String(obj.betId),
+            number: Number(obj.number),
+            color: normColor(obj.color),
+            roundCreatedAtUtc: String(obj.roundCreatedAtUtc),
+            wager: Number(obj.wager),
+            profit: Number(obj.profit),
+            won: Boolean(obj.won),
+            betType: String(obj.betType),
+            criteria: obj.criteria
+        };
+    });
 }

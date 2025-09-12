@@ -8,4 +8,6 @@ public interface IGameService
     Task<SpinResultDto> SpinAsync(string playerName, CancellationToken ct); // Prepares a round for player
     Task<BetOutcomeDto> CommitBetAsync(CommitBetRequest request, CancellationToken ct); // Commit bet to an existing round
     Task<PlayerBalanceDto> GetPlayerAsync(string name, CancellationToken ct);
+    Task<IReadOnlyList<BetHistoryItemDto>> GetBetHistoryAsync(string playerName, int take, CancellationToken ct);
+    Task<SessionSaveResultDto> SaveSessionAsync(SaveSessionRequest request, CancellationToken ct);
 }

@@ -1,36 +1,61 @@
 <script setup lang="ts">
 import { reactive, computed, ref } from 'vue';
 import { api } from './api';
-import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto } from './types';
+import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto, BetHistoryItemDto, SaveSessionBetItem } from './types';
 import SpinPanel from './components/SpinPanel.vue';
 import RouletteWheel from './components/RouletteWheel.vue';
 import BetForm from './components/BetForm.vue';
 
+interface HistoryEntry {
+  spin: SpinResultDto;
+  bet?: BetOutcomeDto | (BetOutcomeDto & { unsaved?: boolean });
+  unsaved?: boolean; // flag to style unsaved entries
+}
+
 interface State {
   player: PlayerBalanceDto | null;
-  lastSpin: SpinResultDto | null;
-  lastBet: BetOutcomeDto | null;
+  lastSpin: SpinResultDto | null; // current spin result before betting
   loading: boolean;
   error: string | null;
-  pendingRoundId: string | null; // latest spin's round to bet on
-  history: { spin: SpinResultDto; bet?: BetOutcomeDto }[];
+  history: HistoryEntry[]; // mixed persisted + unsaved
+  sessionBets: (SaveSessionBetItem & { clientId: string; won?: boolean; profit?: number })[];
+  sessionFundsPreview: number | null;
+  saving: boolean;
+  loggingIn: boolean;
 }
 
 const state = reactive<State>({
   player: null,
   lastSpin: null,
-  lastBet: null,
   loading: false,
   error: null,
-  pendingRoundId: null,
   history: [],
+  sessionBets: [],
+  sessionFundsPreview: null,
+  saving: false,
+  loggingIn: false,
 });
 
 async function login(name: string) {
-  state.error = null; state.loading = true;
-  try { state.player = await api.login({ playerName: name.trim() }); }
-  catch (e: any) { state.error = e.message || 'Error'; }
-  finally { state.loading = false; }
+  state.error = null; state.loading = true; state.loggingIn = true;
+  try {
+    state.player = await api.login({ playerName: name.trim() });
+    if (state.player) {
+      const hist = await api.betHistory(state.player.name, 100);
+      state.history = hist.map(h => ({
+        spin: { roundId: h.roundId, number: h.number, color: h.color, createdAtUtc: h.roundCreatedAtUtc },
+        bet: { roundId: h.roundId, betId: h.betId, number: h.number, color: h.color, wager: h.wager, profit: h.profit, newBalance: state.player!.funds, won: h.won, betType: h.betType, criteria: h.criteria }
+      }));
+      // Reset session (norma 7)
+      state.sessionBets = [];
+      state.sessionFundsPreview = state.player.funds;
+      state.lastSpin = null;
+    }
+  } catch (e: any) {
+    state.error = e.message || 'Error';
+  } finally {
+    state.loading = false; state.loggingIn = false;
+  }
 }
 
 async function refreshPlayer() {
@@ -46,42 +71,105 @@ async function ensureSpin(): Promise<SpinResultDto | null> {
   try {
     const result = await api.spin(state.player.name);
     state.lastSpin = result;
-    state.pendingRoundId = result.roundId;
-    state.history.unshift({ spin: result });
     return result;
-  } catch (e: any) { state.error = e.message || 'Error'; wheelSpinning.value = false; return null; }
+  } catch (e: any) {
+    state.error = e.message || 'Error';
+    wheelSpinning.value = false;
+    return null;
+  }
 }
 
 async function placeBet(payload: { wager: number; betType: string; color?: string | null; isEven?: boolean | null; number?: number | null }) {
   if (!state.player) return;
   state.error = null;
-  if (!state.pendingRoundId) {
+  if (!state.lastSpin) {
     const s = await ensureSpin();
     if (!s) return;
   }
-  if (!state.pendingRoundId) return;
-  state.loading = true;
-  try {
-    const outcome = await api.commitBet({
-      roundId: state.pendingRoundId,
-      playerName: state.player.name,
-      wager: payload.wager,
-      betType: payload.betType,
-      color: payload.color ?? undefined,
-      isEven: payload.isEven ?? undefined,
-      number: payload.number ?? undefined,
-    });
-    state.lastBet = outcome;
-    state.player.funds = outcome.newBalance;
-    const idx = state.history.findIndex(h => h.spin.roundId === outcome.roundId);
-    if (idx !== -1) state.history[idx].bet = outcome;
-  } catch (e: any) { state.error = e.message || 'Error'; }
-  finally { state.loading = false; }
+  if (!state.lastSpin) return;
+  const spin = state.lastSpin;
+  const bet: SaveSessionBetItem & { clientId: string; won?: boolean; profit?: number } = {
+    wager: payload.wager,
+    betType: payload.betType,
+    color: payload.color ?? null,
+    isEven: payload.isEven ?? null,
+    number: payload.number ?? null,
+    numberResult: spin.number,
+    colorResult: spin.color,
+    playedAtUtc: new Date().toISOString(),
+    clientId: crypto.randomUUID(),
+  };
+  state.sessionBets.push(bet);
+  if (state.sessionFundsPreview == null && state.player) state.sessionFundsPreview = state.player.funds;
+  // Deduct wager first
+  if (state.sessionFundsPreview != null) state.sessionFundsPreview -= bet.wager;
+  // Evaluate win locally
+  const isEven = spin.number % 2 === 0;
+  let won = false; let profit = 0;
+  switch (bet.betType) {
+    case 'color':
+      won = bet.color?.toLowerCase() === spin.color.toLowerCase();
+      profit = won ? bet.wager / 2 : 0; break;
+    case 'colorParity':
+      won = bet.color?.toLowerCase() === spin.color.toLowerCase() && bet.isEven === isEven;
+      profit = won ? bet.wager : 0; break;
+    case 'exact':
+      won = bet.color?.toLowerCase() === spin.color.toLowerCase() && bet.number === spin.number;
+      profit = won ? bet.wager * 3 : 0; break;
+  }
+  if (won && state.sessionFundsPreview != null) state.sessionFundsPreview += bet.wager + profit;
+  bet.won = won; bet.profit = profit;
+  // Add a provisional history entry (unsaved)
+  state.history.unshift({
+    spin: { roundId: `tmp-${bet.clientId}`, number: spin.number, color: spin.color, createdAtUtc: spin.createdAtUtc },
+    bet: {
+      roundId: `tmp-${bet.clientId}`,
+      betId: `tmp-${bet.clientId}`,
+      number: spin.number,
+      color: spin.color,
+      wager: bet.wager,
+      profit: profit,
+      newBalance: state.sessionFundsPreview ?? 0,
+      won: won,
+      betType: bet.betType,
+      criteria: { color: bet.color, isEven: bet.isEven, number: bet.number },
+      unsaved: true,
+    } as BetOutcomeDto & { unsaved: boolean },
+    unsaved: true
+  });
+  // Clear spin to allow rapid new spin
+  state.lastSpin = null;
+  wheelSpinning.value = false;
 }
 
+async function saveSession() {
+  if (!state.player || state.sessionBets.length === 0) return;
+  state.saving = true; state.error = null;
+  try {
+    const res = await api.saveSession({ playerName: state.player.name, bets: state.sessionBets });
+    state.player.funds = res.endingFunds;
+    // Remove all unsaved provisional entries
+    state.history = state.history.filter(h => !h.unsaved);
+    // Prepend new persisted outcomes
+    for (const o of res.outcomes.slice().reverse()) {
+      state.history.unshift({ spin: { roundId: o.roundId, number: o.number, color: o.color, createdAtUtc: new Date().toISOString() }, bet: o });
+    }
+    state.sessionBets = [];
+    state.sessionFundsPreview = state.player.funds;
+  } catch (e: any) {
+    state.error = e.message || 'Error guardando sesión';
+  } finally {
+    state.saving = false;
+  }
+}
+
+// No hay botón de descartar según nueva norma; las apuestas temporales sólo desaparecen al guardar o al cambiar de usuario.
+
 function onWheelAnimationEnd() { wheelSpinning.value = false; }
-const canBet = computed(() => !!state.player && !state.loading && !wheelSpinning.value);
+const canBet = computed(() => !!state.player && !wheelSpinning.value && !state.saving && !state.loggingIn);
 const loginName = reactive({ value: '' });
+const hasSession = computed(() => state.sessionBets.length > 0);
+const sessionFundsDisplay = computed(() => state.sessionFundsPreview ?? state.player?.funds ?? 0);
 </script>
 
 <template>
@@ -90,7 +178,7 @@ const loginName = reactive({ value: '' });
       <div class="brand">WinToday <span class="tag">Demo</span></div>
       <div class="player-box" v-if="state.player">
         <span class="player-name">👤 {{ state.player.name }}</span>
-        <span class="funds">💰 {{ state.player.funds.toFixed(2) }}</span>
+        <span class="funds" :title="hasSession ? 'Incluye apuestas no guardadas' : ''">💰 {{ sessionFundsDisplay.toFixed(2) }}<small v-if="hasSession">*</small></span>
       </div>
     </header>
 
@@ -118,32 +206,34 @@ const loginName = reactive({ value: '' });
             <span class="pill col">{{ state.lastSpin.color }}</span>
             <span class="pill time">{{ new Date(state.lastSpin.createdAtUtc).toLocaleTimeString() }}</span>
           </div>
-          <BetForm :round-id="state.pendingRoundId" :disabled="!canBet" @submit="placeBet" />
-          <div class="outcome-box" v-if="state.lastBet">
-            <p class="title">Última Apuesta</p>
-            <p class="result" :class="state.lastBet.won ? 'won' : 'lost'">
-              {{ state.lastBet.won ? '¡Ganaste!' : 'Perdiste' }} <strong>{{ state.lastBet.profit.toFixed(2) }}</strong>
-            </p>
-            <p class="balance">Balance: {{ state.player?.funds.toFixed(2) }}</p>
-            <p class="details">Núm {{ state.lastBet.number }} | {{ state.lastBet.color }} | {{ state.lastBet.betType }}</p>
+          <BetForm :round-id="state.lastSpin?.roundId || ''" :disabled="!canBet" @submit="placeBet" />
+          <div class="session-controls" v-if="hasSession">
+            <button class="primary" :disabled="state.saving" @click="saveSession">💾 Guardar ({{ state.sessionBets.length }})</button>
           </div>
         </div>
         <div class="panel history-panel">
           <h3>Historial de Apuestas</h3>
           <ul class="bet-history-list">
-            <li v-for="h in state.history.filter(h=>h.bet)" :key="h.spin.roundId">
-              <span class="id">{{ h.spin.roundId.slice(0,6) }}</span>
+            <li v-for="h in state.history" :key="h.spin.roundId" :class="{ unsaved: h.unsaved }">
+              <span class="id">{{ h.spin.roundId.startsWith('tmp-') ? '•••' : h.spin.roundId.slice(0,6) }}</span>
               <span class="num">{{ h.spin.number }}</span>
               <span class="colr">{{ h.spin.color }}</span>
-              <span class="res" :class="h.bet!.won ? 'won' : 'lost'">{{ h.bet!.won ? '+'+h.bet!.profit.toFixed(2) : '-'+h.bet!.wager.toFixed(2) }}</span>
+              <span class="res" :class="[h.bet?.won ? 'won' : 'lost', h.unsaved ? 'pending' : '']">
+                <template v-if="h.bet">{{ h.bet.won ? '+'+h.bet.profit.toFixed(2) : '-'+(h.bet as any).wager.toFixed(2) }}</template>
+              </span>
+              <span class="flag" v-if="h.unsaved">(no guardada)</span>
             </li>
           </ul>
+          <p class="legend" v-if="hasSession">* Apuestas marcadas como "no guardada" aún no impactan tu saldo real.</p>
         </div>
       </div>
     </section>
 
     <transition name="fade">
-      <div v-if="state.loading && !wheelSpinning" class="loading-overlay">Cargando...</div>
+      <div v-if="state.loading && state.loggingIn" class="loading-overlay">Entrando...</div>
+    </transition>
+    <transition name="fade">
+      <div v-if="state.saving" class="loading-overlay">Guardando sesión...</div>
     </transition>
     <transition name="fade">
       <div v-if="state.error" class="toast error">{{ state.error }}</div>
@@ -191,6 +281,10 @@ button.primary:disabled { opacity:.5; cursor:not-allowed; }
 .bet-history-list li .res { text-align:right; font-weight:600; }
 .bet-history-list li .res.won { color:#4ade80; }
 .bet-history-list li .res.lost { color:#f87171; }
+.bet-history-list li.unsaved { opacity:.85; position:relative; }
+.bet-history-list li .res.pending { text-decoration:underline dotted; }
+.bet-history-list li .flag { font-size:.55rem; opacity:.6; margin-left:.4rem; letter-spacing:.5px; text-transform:uppercase; }
+.legend { margin-top:.5rem; opacity:.55; font-size:.6rem; letter-spacing:.5px; }
 .outcome p { margin:.3rem 0; }
 .outcome .won { color:#4ade80; }
 .outcome .lost { color:#f87171; }
