@@ -16,7 +16,8 @@ public class Player
     [Column(TypeName = "decimal(18,2)")]
     public decimal Funds { get; set; }
 
-    [Timestamp]
+    // Removed [Timestamp] because PostgreSQL does not auto-generate a SQL Server style rowversion.
+    // Keeping the column allows future custom concurrency logic if desired.
     public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 
     public ICollection<Bet> Bets { get; set; } = new List<Bet>();

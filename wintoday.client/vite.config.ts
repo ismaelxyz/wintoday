@@ -47,10 +47,11 @@ export default defineConfig({
     },
     server: {
         proxy: {
-            '^/weatherforecast': {
+            '^/api': { // Forward API calls to ASP.NET Core backend during dev
                 target,
-                secure: false
-            }
+                secure: false,
+                changeOrigin: true,
+            },
         },
         port: parseInt(env.DEV_SERVER_PORT || '62652'),
         https: {
