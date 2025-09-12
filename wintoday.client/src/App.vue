@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { reactive, computed, ref } from 'vue';
+import { reactive, computed, ref, watch } from 'vue';
 import { api } from './api';
-import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto, BetHistoryItemDto, SaveSessionBetItem } from './types';
-import SpinPanel from './components/SpinPanel.vue';
-import RouletteWheel from './components/RouletteWheel.vue';
+import type { PlayerBalanceDto, SpinResultDto, BetOutcomeDto, SaveSessionBetItem } from './types';
+
 import BetForm from './components/BetForm.vue';
 
 interface HistoryEntry {
@@ -51,18 +50,37 @@ async function login(name: string) {
       state.sessionFundsPreview = state.player.funds;
       state.lastSpin = null;
     }
-  } catch (e: any) {
-    state.error = e.message || 'Error';
+  } catch (e: unknown) {
+    const msg = e && typeof e === 'object' && 'message' in e ? (e as { message?: string }).message : 'Error';
+    state.error = msg || 'Error';
   } finally {
     state.loading = false; state.loggingIn = false;
   }
 }
 
-async function refreshPlayer() {
-  if (!state.player) return; try { state.player = await api.getPlayer(state.player.name); } catch {}
-}
-
 const wheelSpinning = ref(false);
+interface WheelExpose { launchWheel?: () => void; reset?: () => void }
+const wheelRef = ref<WheelExpose | null>(null);
+// Secuencia estándar europea 0-36
+const rouletteSequence = [0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
+interface RouletteItem { id:number; name:string; htmlContent:string; textColor?:string; background?:string }
+function isRed(num:number){ return new Set([32,19,21,25,34,27,36,30,23,5,16,1,14,9,18,7,12,3]).has(num); }
+const rouletteItems: RouletteItem[] = rouletteSequence.map(n=>({ id:n, name:String(n), htmlContent:`<span>${n}</span>`, textColor:'#fff', background: n===0 ? '#0d9488' : (isRed(n)? '#b91c1c':'#111827') }));
+// Adaptar a la API de vue3-roulette: objeto { value }
+const wheelResultIndex = ref<{ value: number | null }>({ value: null });
+watch(() => state.lastSpin, (val) => {
+  if (val) {
+    wheelResultIndex.value.value = rouletteSequence.indexOf(val.number);
+    if (wheelSpinning.value) setTimeout(()=>wheelRef.value?.launchWheel?.(), 40);
+  }
+});
+function onWheelStart(){ /* opcional: sonido */ }
+function onWheelEnd(){
+  wheelSpinning.value = false;
+  onWheelAnimationEnd();
+  state.lastSpin = null;
+  wheelResultIndex.value.value = null;
+}
 
 async function ensureSpin(): Promise<SpinResultDto | null> {
   if (!state.player || wheelSpinning.value) return null;
@@ -71,9 +89,12 @@ async function ensureSpin(): Promise<SpinResultDto | null> {
   try {
     const result = await api.spin(state.player.name);
     state.lastSpin = result;
+  // El watcher sobre lastSpin ajustará wheelResultIndex y luego lanzará.
+  setTimeout(()=>wheelRef.value?.launchWheel?.(), 140);
     return result;
-  } catch (e: any) {
-    state.error = e.message || 'Error';
+  } catch (e: unknown) {
+    const msg = e && typeof e === 'object' && 'message' in e ? (e as { message?: string }).message : 'Error';
+    state.error = msg || 'Error';
     wheelSpinning.value = false;
     return null;
   }
@@ -156,20 +177,25 @@ async function saveSession() {
     }
     state.sessionBets = [];
     state.sessionFundsPreview = state.player.funds;
-  } catch (e: any) {
-    state.error = e.message || 'Error guardando sesión';
+  } catch (e: unknown) {
+    const msg = e && typeof e === 'object' && 'message' in e ? (e as { message?: string }).message : 'Error guardando sesión';
+    state.error = msg || 'Error guardando sesión';
   } finally {
     state.saving = false;
   }
 }
 
-// No hay botón de descartar según nueva norma; las apuestas temporales sólo desaparecen al guardar o al cambiar de usuario.
 
 function onWheelAnimationEnd() { wheelSpinning.value = false; }
 const canBet = computed(() => !!state.player && !wheelSpinning.value && !state.saving && !state.loggingIn);
 const loginName = reactive({ value: '' });
 const hasSession = computed(() => state.sessionBets.length > 0);
 const sessionFundsDisplay = computed(() => state.sessionFundsPreview ?? state.player?.funds ?? 0);
+
+function betWager(b: HistoryEntry['bet']): number {
+  if (!b) return 0;
+  return (b as BetOutcomeDto).wager;
+}
 </script>
 
 <template>
@@ -199,7 +225,18 @@ const sessionFundsDisplay = computed(() => state.sessionFundsPreview ?? state.pl
         <div class="panel game-panel">
           <h3>Ruleta & Apuesta</h3>
           <div class="wheel-wrapper">
-            <RouletteWheel :spin="state.lastSpin" :spinning="wheelSpinning" @animation-end="onWheelAnimationEnd" />
+            <Roulette
+              ref="wheelRef"
+              :items="rouletteItems"
+              :wheel-result-index="wheelResultIndex"
+              :size="260"
+              :duration="4"
+              display-indicator
+              centered-indicator
+              easing="ease"
+              @wheel-start="onWheelStart"
+              @wheel-end="onWheelEnd"
+            />
           </div>
           <div class="spin-meta" v-if="state.lastSpin">
             <span class="pill num"># {{ state.lastSpin.number }}</span>
@@ -219,7 +256,7 @@ const sessionFundsDisplay = computed(() => state.sessionFundsPreview ?? state.pl
               <span class="num">{{ h.spin.number }}</span>
               <span class="colr">{{ h.spin.color }}</span>
               <span class="res" :class="[h.bet?.won ? 'won' : 'lost', h.unsaved ? 'pending' : '']">
-                <template v-if="h.bet">{{ h.bet.won ? '+'+h.bet.profit.toFixed(2) : '-'+(h.bet as any).wager.toFixed(2) }}</template>
+                <template v-if="h.bet">{{ h.bet.won ? '+'+h.bet.profit.toFixed(2) : '-'+betWager(h.bet).toFixed(2) }}</template>
               </span>
               <span class="flag" v-if="h.unsaved">(no guardada)</span>
             </li>

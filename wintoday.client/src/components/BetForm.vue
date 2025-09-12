@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch, computed } from 'vue';
 
-const props = defineProps<{ roundId?: string | null, disabled?: boolean }>();
+// const props = defineProps<{ roundId?: string | null, disabled?: boolean }>();
 const emit = defineEmits<{ (e: 'submit', payload: { wager: number; betType: string; color?: string | null; isEven?: boolean | null; number?: number | null }): void }>();
 
 const state = reactive({
@@ -18,7 +18,6 @@ watch(() => state.betType, () => {
   if (state.betType !== 'exact') state.number = 0;
 });
 
-// Ahora se puede apostar siempre: el flujo creará un giro antes de enviar la apuesta
 const canSubmit = computed(() => state.wager > 0);
 
 function submit() {
